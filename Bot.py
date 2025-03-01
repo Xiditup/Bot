@@ -14,6 +14,9 @@ logging.basicConfig(
 BOT_TOKEN = '7933619829:AAFtJ1eCfnn5VXdJSQf7S15-vx6-yA9jvvg'  # Замените на ваш токен
 YOUR_USER_ID = 5929692940  # Замените на ваш ID
 
+# Абсолютный путь к базе данных
+DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
+
 # Глобальные переменные
 total_requests = 0  # Общее количество заявок за текущий день
 last_reset_date = datetime.now().date()  # Дата последнего сброса счётчика текущего дня
@@ -22,7 +25,7 @@ weekly_stats = {}  # Словарь для статистики по дням н
 # Инициализация базы данных
 def init_db():
     """Создает базу данных и таблицу, если они не существуют."""
-    conn = sqlite3.connect('/root/Zayavka/BD/BD/join_requests.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS requests (
@@ -71,7 +74,7 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
     update_weekly_stats()  # Обновляем статистику
 
     # Проверяем, есть ли уже заявки от этого пользователя
-    conn = sqlite3.connect('join_requests.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT chat_title, request_date FROM requests WHERE user_id = ?', (user.id,))
     existing_requests = cursor.fetchall()
@@ -151,7 +154,7 @@ async def global_stats_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Эта команда доступна только владельцу бота.")
         return
 
-    conn = sqlite3.connect('join_requests.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM requests')
     total_requests = cursor.fetchone()[0]
