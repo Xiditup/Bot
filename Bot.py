@@ -22,7 +22,7 @@ weekly_stats = {}  # Словарь для статистики по дням н
 # Инициализация базы данных
 def init_db():
     """Создает базу данных и таблицу, если они не существуют."""
-    conn = sqlite3.connect('join_requests.db')
+    conn = sqlite3.connect('/root/Zayavka/BD/BD/join_requests.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS requests (
