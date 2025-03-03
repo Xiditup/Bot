@@ -14,8 +14,8 @@ logging.basicConfig(
 )
 
 # Токен бота и ваш Telegram ID
-BOT_TOKEN = '7545787055:AAEiK8fp3iul1FKrMvWAuBXMeArYkzn32hU'
-YOUR_USER_ID = 7452973990
+BOT_TOKEN = '7933619829:AAFtJ1eCfnn5VXdJSQf7S15-vx6-yA9jvvg'
+YOUR_USER_ID = 5929692940
 
 # Абсолютный путь к базе данных
 DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
