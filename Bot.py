@@ -1,7 +1,10 @@
 import logging
 import sqlite3
 from telegram import Update
-from telegram.ext import Application, ChatJoinRequestHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application, ChatJoinRequestHandler, CommandHandler, ContextTypes,
+    ConversationHandler, MessageHandler, filters
+)
 from datetime import datetime, timedelta
 
 # Включите логирование
@@ -11,8 +14,8 @@ logging.basicConfig(
 )
 
 # Токен бота и ваш Telegram ID
-BOT_TOKEN = '7933619829:AAFtJ1eCfnn5VXdJSQf7S15-vx6-yA9jvvg'  # Замените на ваш токен
-YOUR_USER_ID = 5929692940  # Замените на ваш ID
+BOT_TOKEN = '7545787055:AAEiK8fp3iul1FKrMvWAuBXMeArYkzn32hU'
+YOUR_USER_ID = 7452973990
 
 # Абсолютный путь к базе данных
 DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
@@ -21,6 +24,9 @@ DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
 total_requests = 0  # Общее количество заявок за текущий день
 last_reset_date = datetime.now().date()  # Дата последнего сброса счётчика текущего дня
 weekly_stats = {}  # Словарь для статистики по дням недели (дата: количество заявок)
+
+# Состояния для ConversationHandler
+WAITING_FOR_USER_ID = 1
 
 # Инициализация базы данных
 def init_db():
@@ -172,15 +178,126 @@ async def global_stats_command(update: Update, context: ContextTypes.DEFAULT_TYP
     logging.info("Запрошена глобальная статистика")
     conn.close()
 
+# Функции для поиска пользователя с использованием ConversationHandler
+async def search_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало процесса поиска пользователя: запрос ID."""
+    if update.effective_user.id != YOUR_USER_ID:
+        await update.message.reply_text("Эта команда доступна только владельцу бота.")
+        return ConversationHandler.END
+
+    await update.message.reply_text("Пожалуйста, введите ID пользователя.")
+    return WAITING_FOR_USER_ID
+
+async def search_user_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка введённого ID пользователя, вывод всей информации из базы."""
+    user_input = update.message.text
+
+    try:
+        user_id = int(user_input)
+    except ValueError:
+        await update.message.reply_text("ID пользователя должен быть числом. Попробуйте снова.")
+        return WAITING_FOR_USER_ID
+
+    # Подключаемся к базе данных
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT user_id, username, full_name, chat_id, chat_title, request_date 
+        FROM requests 
+        WHERE user_id = ? 
+        ORDER BY request_date DESC
+    ''', (user_id,))
+    requests = cursor.fetchall()
+    conn.close()
+
+    # Формируем ответ
+    if not requests:
+        await update.message.reply_text(f"Заявки от пользователя с ID {user_id} не найдены.")
+    else:
+        message = f"Найденные заявки от пользователя с ID {user_id}:\n\n"
+        for i, (user_id, username, full_name, chat_id, chat_title, request_date) in enumerate(requests, 1):
+            user_info = f"@{username}" if username else "нет username"
+            message += (
+                f"Заявка #{i}:\n"
+                f"ID пользователя: {user_id}\n"
+                f"Ник: {user_info}\n"
+                f"Полное имя: {full_name}\n"
+                f"ID чата: {chat_id}\n"
+                f"Название чата: {chat_title}\n"
+                f"Дата и время: {request_date}\n"
+                f"{'-' * 20}\n"
+            )
+        await update.message.reply_text(message)
+    
+    logging.info(f"Запрошен поиск заявок для user_id {user_id}")
+    return ConversationHandler.END
+
+async def search_user_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отмена процесса поиска."""
+    await update.message.reply_text("Поиск отменён.")
+    return ConversationHandler.END
+
+async def search_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда для поиска заявок по chat_id: /searchchat <chat_id>."""
+    if update.effective_user.id != YOUR_USER_ID:
+        await update.message.reply_text("Эта команда доступна только владельцу бота.")
+        return
+
+    # Проверяем, указан ли chat_id
+    if not context.args:
+        await update.message.reply_text("Пожалуйста, укажите ID чата. Пример: /searchchat -100123456789")
+        return
+
+    try:
+        chat_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID чата должен быть числом.")
+        return
+
+    # Подключаемся к базе данных
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT username, full_name, request_date 
+        FROM requests 
+        WHERE chat_id = ? 
+        ORDER BY request_date DESC
+    ''', (chat_id,))
+    requests = cursor.fetchall()
+    conn.close()
+
+    # Формируем ответ
+    if not requests:
+        await update.message.reply_text(f"Заявки для чата с ID {chat_id} не найдены.")
+    else:
+        message = f"Найденные заявки для чата с ID {chat_id}:\n"
+        for i, (username, full_name, request_date) in enumerate(requests, 1):
+            user_info = f"@{username}" if username else full_name
+            message += f"{i}. Пользователь: {user_info} ({request_date})\n"
+        await update.message.reply_text(message)
+    
+    logging.info(f"Запрошен поиск заявок для chat_id {chat_id}")
+
 def main() -> None:
     """Запуск бота."""
     application = Application.builder().token(BOT_TOKEN).build()
+
+    # ConversationHandler для поиска пользователя
+    search_user_conv = ConversationHandler(
+        entry_points=[CommandHandler("searchuser", search_user_start)],
+        states={
+            WAITING_FOR_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_user_process)],
+        },
+        fallbacks=[CommandHandler("cancel", search_user_cancel)],
+    )
 
     # Обработчики
     application.add_handler(ChatJoinRequestHandler(handle_join_request))
     application.add_handler(CommandHandler("resetrequests", reset_requests))
     application.add_handler(CommandHandler("weeklystats", weekly_stats_command))
     application.add_handler(CommandHandler("globalstats", global_stats_command))
+    application.add_handler(search_user_conv)  # Добавляем ConversationHandler для /searchuser
+    application.add_handler(CommandHandler("searchchat", search_chat))  # Добавляем обработчик для /searchchat
 
     # Запуск бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
