@@ -20,15 +20,13 @@ YOUR_USER_ID = 5929692940
 # Абсолютный путь к базе данных
 DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
 
-
 # Глобальные переменные
 total_requests = 0
 last_reset_date = datetime.now().date()
 weekly_stats = {}
 
 # Состояния для ConversationHandler
-WAITING_FOR_USER_ID, WAITING_FOR_REASON = range(2)
-
+WAITING_FOR_USER_ID, WAITING_FOR_REASON, WAITING_FOR_LEAD_NAME = range(3)
 
 def init_db():
     """Создает базы данных и таблицы, если они не существуют."""
@@ -47,12 +45,13 @@ def init_db():
         )
     ''')
 
-    # Таблица черного списка
+    # Таблица черного списка (добавлено поле lead_name и изменено reason на TEXT для хранения истории)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS blacklist (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             full_name TEXT,
+            lead_name TEXT,
             reason TEXT,
             added_date TEXT
         )
@@ -61,10 +60,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 # Инициализация базы данных при запуске
 init_db()
-
 
 def update_weekly_stats():
     """Обновляет статистику за неделю."""
@@ -74,16 +71,14 @@ def update_weekly_stats():
     weekly_stats = {date: count for date, count in weekly_stats.items() if date > week_ago}
     weekly_stats[current_date] = total_requests
 
-
 def check_blacklist(user_id):
     """Проверяет, находится ли пользователь в черном списке."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT reason, added_date FROM blacklist WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT lead_name, reason, added_date FROM blacklist WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     conn.close()
     return result
-
 
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик заявок на вступление в канал."""
@@ -120,11 +115,12 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     if blacklist_info:
-        reason, added_date = blacklist_info
+        lead_name, reason, added_date = blacklist_info
         message += (
             f"\n\n⚠️ ВНИМАНИЕ: ПОЛЬЗОВАТЕЛЬ В ЧЕРНОМ СПИСКЕ ⚠️\n"
-            f"Причина: {reason}\n"
-            f"Добавлен: {added_date}"
+            f"Имя лида: {lead_name if lead_name else 'Не указано'}\n"
+            f"Комментарии:\n{reason}\n"
+            f"Впервые добавлен: {added_date}"
         )
 
     if existing_requests:
@@ -141,7 +137,6 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await context.bot.send_message(chat_id=YOUR_USER_ID, text=message)
     logging.info(f"Получена заявка от {user.full_name} (@{user.username}) в {chat.title}")
-
 
 async def reset_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда для ручного сброса счётчика заявок: /resetrequests."""
@@ -160,7 +155,6 @@ async def reset_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"Всего заявок за день: {total_requests}"
     )
     logging.info("Счётчик заявок сброшен вручную")
-
 
 async def weekly_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда для получения статистики за неделю: /weeklystats."""
@@ -184,7 +178,6 @@ async def weekly_stats_command(update: Update, context: ContextTypes.DEFAULT_TYP
     stats_message += f"\nИтого за неделю: {total_weekly} заявок"
     await update.message.reply_text(stats_message)
     logging.info("Запрошена статистика за неделю")
-
 
 async def global_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда для получения глобальной статистики: /globalstats."""
@@ -210,7 +203,6 @@ async def global_stats_command(update: Update, context: ContextTypes.DEFAULT_TYP
     logging.info("Запрошена глобальная статистика")
     conn.close()
 
-
 async def search_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начало процесса поиска пользователя: запрос ID."""
     if update.effective_user.id != YOUR_USER_ID:
@@ -219,7 +211,6 @@ async def search_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     await update.message.reply_text("Пожалуйста, введите ID пользователя.")
     return WAITING_FOR_USER_ID
-
 
 async def search_user_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработка введённого ID пользователя, вывод всей информации из базы."""
@@ -263,12 +254,10 @@ async def search_user_process(update: Update, context: ContextTypes.DEFAULT_TYPE
     logging.info(f"Запрошен поиск заявок для user_id {user_id}")
     return ConversationHandler.END
 
-
 async def search_user_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Отмена процесса поиска."""
     await update.message.reply_text("Поиск отменён.")
     return ConversationHandler.END
-
 
 async def search_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда для поиска заявок по chat_id: /searchchat <chat_id>."""
@@ -308,7 +297,6 @@ async def search_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     logging.info(f"Запрошен поиск заявок для chat_id {chat_id}")
 
-
 async def blacklist_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начало процесса добавления в черный список."""
     if update.effective_user.id != YOUR_USER_ID:
@@ -317,7 +305,6 @@ async def blacklist_start(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text("Пожалуйста, введите ID пользователя для добавления в черный список.")
     return WAITING_FOR_USER_ID
-
 
 async def blacklist_get_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Получение ID пользователя для черного списка."""
@@ -332,44 +319,69 @@ async def blacklist_get_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("ID должен быть числом. Попробуйте снова.")
         return WAITING_FOR_USER_ID
 
-
 async def blacklist_get_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Добавление пользователя в черный список с причиной."""
+    """Получение причины и запрос имени лида."""
     reason = update.message.text
+    context.user_data['blacklist_reason'] = reason
+    await update.message.reply_text("Введите имя лида (или напишите 'нет', если не хотите указывать).")
+    return WAITING_FOR_LEAD_NAME
+
+async def blacklist_get_lead_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Добавление пользователя в черный список с учетом истории комментариев и имени лида."""
+    lead_name_input = update.message.text
     user_id = context.user_data.get('blacklist_user_id')
+    new_reason = context.user_data.get('blacklist_reason')
+
+    lead_name = None if lead_name_input.lower() == 'нет' else lead_name_input
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT username, full_name FROM requests WHERE user_id = ? ORDER BY request_date DESC LIMIT 1',
-                   (user_id,))
-    user_info = cursor.fetchone()
+    # Проверяем, есть ли пользователь уже в черном списке
+    cursor.execute('SELECT username, full_name, reason, added_date FROM blacklist WHERE user_id = ?', (user_id,))
+    existing_entry = cursor.fetchone()
 
-    username = user_info[0] if user_info else None
-    full_name = user_info[1] if user_info else "Неизвестно"
-
-    cursor.execute('''
-        INSERT OR REPLACE INTO blacklist (user_id, username, full_name, reason, added_date)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (user_id, username, full_name, reason, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    if existing_entry:
+        # Если пользователь уже в черном списке, добавляем новый комментарий
+        username, full_name, existing_reason, added_date = existing_entry
+        updated_reason = f"{existing_reason}\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {new_reason}"
+        cursor.execute('''
+            UPDATE blacklist 
+            SET reason = ?, lead_name = ?
+            WHERE user_id = ?
+        ''', (updated_reason, lead_name, user_id))
+        message = (
+            f"Пользователь с ID {user_id} уже был в черном списке. Добавлен новый комментарий:\n"
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {new_reason}"
+        )
+    else:
+        # Если пользователя нет в черном списке, добавляем новую запись
+        cursor.execute('SELECT username, full_name FROM requests WHERE user_id = ? ORDER BY request_date DESC LIMIT 1', (user_id,))
+        user_info = cursor.fetchone()
+        username = user_info[0] if user_info else None
+        full_name = user_info[1] if user_info else "Неизвестно"
+        
+        cursor.execute('''
+            INSERT INTO blacklist (user_id, username, full_name, lead_name, reason, added_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, username, full_name, lead_name, f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {new_reason}", datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        message = (
+            f"Пользователь с ID {user_id} добавлен в черный список.\n"
+            f"Причина: {new_reason}\n"
+            f"Имя лида: {lead_name if lead_name else 'Не указано'}"
+        )
 
     conn.commit()
     conn.close()
 
-    await update.message.reply_text(
-        f"Пользователь с ID {user_id} добавлен в черный список.\n"
-        f"Причина: {reason}"
-    )
-    logging.info(f"Пользователь {user_id} добавлен в черный список")
-
+    await update.message.reply_text(message)
+    logging.info(f"Пользователь {user_id} обновлен/добавлен в черный список")
     return ConversationHandler.END
-
 
 async def blacklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Отмена добавления в черный список."""
     await update.message.reply_text("Добавление в черный список отменено.")
     return ConversationHandler.END
-
 
 async def check_blacklist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Проверка статуса пользователя в черном списке: /checkblacklist <user_id>."""
@@ -386,17 +398,48 @@ async def check_blacklist_command(update: Update, context: ContextTypes.DEFAULT_
         blacklist_info = check_blacklist(user_id)
 
         if blacklist_info:
-            reason, added_date = blacklist_info
+            lead_name, reason, added_date = blacklist_info
             await update.message.reply_text(
                 f"Пользователь с ID {user_id} в черном списке.\n"
-                f"Причина: {reason}\n"
-                f"Добавлен: {added_date}"
+                f"Имя лида: {lead_name if lead_name else 'Не указано'}\n"
+                f"Комментарии:\n{reason}\n"
+                f"Впервые добавлен: {added_date}"
             )
         else:
             await update.message.reply_text(f"Пользователь с ID {user_id} не найден в черном списке.")
     except ValueError:
         await update.message.reply_text("ID должен быть числом.")
 
+async def remove_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаление пользователя из черного списка: /removeblacklist <user_id>."""
+    if update.effective_user.id != YOUR_USER_ID:
+        await update.message.reply_text("Эта команда доступна только владельцу бота.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Укажите ID пользователя. Пример: /removeblacklist 123456789")
+        return
+
+    try:
+        user_id = int(context.args[0])
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Проверяем, есть ли пользователь в черном списке
+        cursor.execute('SELECT lead_name FROM blacklist WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+
+        if result:
+            cursor.execute('DELETE FROM blacklist WHERE user_id = ?', (user_id,))
+            conn.commit()
+            await update.message.reply_text(f"Пользователь с ID {user_id} удалён из черного списка.")
+            logging.info(f"Пользователь {user_id} удалён из черного списка")
+        else:
+            await update.message.reply_text(f"Пользователь с ID {user_id} не найден в черном списке.")
+        
+        conn.close()
+    except ValueError:
+        await update.message.reply_text("ID должен быть числом.")
 
 def main() -> None:
     """Запуск бота."""
@@ -417,6 +460,7 @@ def main() -> None:
         states={
             WAITING_FOR_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, blacklist_get_id)],
             WAITING_FOR_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, blacklist_get_reason)],
+            WAITING_FOR_LEAD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, blacklist_get_lead_name)],
         },
         fallbacks=[CommandHandler("cancel", blacklist_cancel)],
     )
@@ -430,10 +474,10 @@ def main() -> None:
     application.add_handler(CommandHandler("searchchat", search_chat))
     application.add_handler(blacklist_conv)
     application.add_handler(CommandHandler("checkblacklist", check_blacklist_command))
+    application.add_handler(CommandHandler("removeblacklist", remove_blacklist))
 
     # Запуск бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == '__main__':
     main()
