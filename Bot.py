@@ -19,15 +19,13 @@ YOUR_USER_ID = 5929692940
 
 # Абсолютный путь к базе данных
 DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
-
-
 # Глобальные переменные
 total_requests = 0
 last_reset_date = datetime.now().date()
 weekly_stats = {}
 
 # Состояния для ConversationHandler
-WAITING_FOR_USER_ID, WAITING_FOR_REASON, WAITING_FOR_LEAD_NAME = range(3)
+WAITING_FOR_USER_ID, WAITING_FOR_REASON, WAITING_FOR_LEAD_NAME, WAITING_FOR_CHECK_ID, WAITING_FOR_REMOVE_ID = range(5)
 
 def init_db():
     """Создает базы данных и таблицы, если они не существуют, и обновляет структуру."""
@@ -391,18 +389,21 @@ async def blacklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text("Добавление в черный список отменено.")
     return ConversationHandler.END
 
-async def check_blacklist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Проверка статуса пользователя в черном списке: /checkblacklist <user_id>."""
+async def check_blacklist_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало процесса проверки статуса в черном списке."""
     if update.effective_user.id != YOUR_USER_ID:
         await update.message.reply_text("Эта команда доступна только владельцу бота.")
-        return
+        return ConversationHandler.END
 
-    if not context.args:
-        await update.message.reply_text("Укажите ID пользователя. Пример: /checkblacklist 123456789")
-        return
+    await update.message.reply_text("Пожалуйста, введите ID пользователя для проверки в черном списке.")
+    return WAITING_FOR_CHECK_ID
+
+async def check_blacklist_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка введённого ID для проверки в черном списке."""
+    user_input = update.message.text
 
     try:
-        user_id = int(context.args[0])
+        user_id = int(user_input)
         blacklist_info = check_blacklist(user_id)
 
         if blacklist_info:
@@ -416,20 +417,27 @@ async def check_blacklist_command(update: Update, context: ContextTypes.DEFAULT_
         else:
             await update.message.reply_text(f"Пользователь с ID {user_id} не найден в черном списке.")
     except ValueError:
-        await update.message.reply_text("ID должен быть числом.")
+        await update.message.reply_text("ID должен быть числом. Попробуйте снова.")
+        return WAITING_FOR_CHECK_ID
 
-async def remove_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Удаление пользователя из черного списка: /removeblacklist <user_id>."""
+    logging.info(f"Запрошена проверка user_id {user_id} в черном списке")
+    return ConversationHandler.END
+
+async def remove_blacklist_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало процесса удаления из черного списка."""
     if update.effective_user.id != YOUR_USER_ID:
         await update.message.reply_text("Эта команда доступна только владельцу бота.")
-        return
+        return ConversationHandler.END
 
-    if not context.args:
-        await update.message.reply_text("Укажите ID пользователя. Пример: /removeblacklist 123456789")
-        return
+    await update.message.reply_text("Пожалуйста, введите ID пользователя для удаления из черного списка.")
+    return WAITING_FOR_REMOVE_ID
+
+async def remove_blacklist_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка введённого ID для удаления из черного списка."""
+    user_input = update.message.text
 
     try:
-        user_id = int(context.args[0])
+        user_id = int(user_input)
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
@@ -447,7 +455,15 @@ async def remove_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         
         conn.close()
     except ValueError:
-        await update.message.reply_text("ID должен быть числом.")
+        await update.message.reply_text("ID должен быть числом. Попробуйте снова.")
+        return WAITING_FOR_REMOVE_ID
+
+    return ConversationHandler.END
+
+async def blacklist_operation_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отмена операций с черным списком."""
+    await update.message.reply_text("Операция отменена.")
+    return ConversationHandler.END
 
 def main() -> None:
     """Запуск бота."""
@@ -462,15 +478,21 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", search_user_cancel)],
     )
 
-    # ConversationHandler для черного списка
+    # ConversationHandler для операций с черным списком
     blacklist_conv = ConversationHandler(
-        entry_points=[CommandHandler("addblacklist", blacklist_start)],
+        entry_points=[
+            CommandHandler("addblacklist", blacklist_start),
+            CommandHandler("checkblacklist", check_blacklist_start),
+            CommandHandler("removeblacklist", remove_blacklist_start),
+        ],
         states={
             WAITING_FOR_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, blacklist_get_id)],
             WAITING_FOR_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, blacklist_get_reason)],
             WAITING_FOR_LEAD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, blacklist_get_lead_name)],
+            WAITING_FOR_CHECK_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_blacklist_process)],
+            WAITING_FOR_REMOVE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_blacklist_process)],
         },
-        fallbacks=[CommandHandler("cancel", blacklist_cancel)],
+        fallbacks=[CommandHandler("cancel", blacklist_operation_cancel)],
     )
 
     # Обработчики
@@ -481,8 +503,6 @@ def main() -> None:
     application.add_handler(search_user_conv)
     application.add_handler(CommandHandler("searchchat", search_chat))
     application.add_handler(blacklist_conv)
-    application.add_handler(CommandHandler("checkblacklist", check_blacklist_command))
-    application.add_handler(CommandHandler("removeblacklist", remove_blacklist))
 
     # Запуск бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
