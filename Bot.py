@@ -20,6 +20,7 @@ YOUR_USER_ID = 5929692940
 # Абсолютный путь к базе данных
 DB_PATH = '/root/Zayavka/BD/BD/join_requests.db'
 
+
 # Глобальные переменные
 total_requests = 0
 last_reset_date = datetime.now().date()
@@ -29,7 +30,7 @@ weekly_stats = {}
 WAITING_FOR_USER_ID, WAITING_FOR_REASON, WAITING_FOR_LEAD_NAME = range(3)
 
 def init_db():
-    """Создает базы данных и таблицы, если они не существуют."""
+    """Создает базы данных и таблицы, если они не существуют, и обновляет структуру."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -45,7 +46,7 @@ def init_db():
         )
     ''')
 
-    # Таблица черного списка (добавлено поле lead_name и изменено reason на TEXT для хранения истории)
+    # Таблица черного списка
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS blacklist (
             user_id INTEGER PRIMARY KEY,
@@ -56,6 +57,13 @@ def init_db():
             added_date TEXT
         )
     ''')
+
+    # Проверка и добавление столбца lead_name, если его нет
+    cursor.execute("PRAGMA table_info(blacklist)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'lead_name' not in columns:
+        cursor.execute('ALTER TABLE blacklist ADD COLUMN lead_name TEXT')
+        logging.info("Добавлен столбец lead_name в таблицу blacklist")
 
     conn.commit()
     conn.close()
